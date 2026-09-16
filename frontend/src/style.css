@@ -1,0 +1,406 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.app-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 1.5rem 2rem;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.app-header h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+.data-notice {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* Main Content */
+.main-content {
+  display: flex;
+  flex: 1;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem;
+  gap: 2rem;
+}
+
+/* Filter Panel */
+.filter-panel {
+  width: 300px;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  height: fit-content;
+  position: sticky;
+  top: 2rem;
+}
+
+.filter-panel h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1.5rem;
+  color: #667eea;
+}
+
+.filter-group {
+  margin-bottom: 1.5rem;
+}
+
+.filter-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #555;
+}
+
+.filter-group input[type="text"],
+.filter-group input[type="number"],
+.filter-group select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.filter-group input[type="text"]:focus,
+.filter-group input[type="number"]:focus,
+.filter-group select:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.checkbox-group input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.btn-primary,
+.btn-secondary {
+  width: 100%;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-primary {
+  background: #667eea;
+  color: white;
+  margin-bottom: 0.5rem;
+}
+
+.btn-primary:hover {
+  background: #5568d3;
+}
+
+.btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-secondary:hover {
+  background: #d0d0d0;
+}
+
+/* Results Section */
+.results-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.results-header {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.results-header h2 {
+  font-size: 1.5rem;
+  color: #667eea;
+  margin-bottom: 0.5rem;
+}
+
+.result-stats {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.badge-realtime {
+  display: inline-block;
+  background: #4caf50;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+.badge-local {
+  display: inline-block;
+  background: #ff9800;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+/* Food Grid */
+.food-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.food-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.food-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+
+.food-card.selected {
+  border: 2px solid #667eea;
+}
+
+.food-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: 1rem;
+}
+
+.food-header h3 {
+  font-size: 1.25rem;
+  color: #333;
+  flex: 1;
+}
+
+.food-source {
+  font-size: 0.75rem;
+  background: #e3f2fd;
+  color: #1976d2;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.food-info p {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.status-open {
+  color: #4caf50;
+  font-weight: 600;
+}
+
+.status-closed {
+  color: #f44336;
+  font-weight: 600;
+}
+
+.status-unknown {
+  color: #999;
+}
+
+/* Map Section */
+.map-section {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.map-section h2 {
+  font-size: 1.5rem;
+  color: #667eea;
+  margin-bottom: 1rem;
+}
+
+.amap-container {
+  width: 100%;
+  height: 500px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Info Window */
+.food-info-window {
+  padding: 0.5rem;
+  min-width: 200px;
+}
+
+.food-info-window h3 {
+  margin-bottom: 0.5rem;
+  color: #667eea;
+}
+
+.food-info-window p {
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+
+/* Detail Drawer */
+.detail-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.drawer-content {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.close-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: #f44336;
+  color: white;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  background: #d32f2f;
+}
+
+.drawer-content h2 {
+  color: #667eea;
+  margin-bottom: 1.5rem;
+  padding-right: 2rem;
+}
+
+.detail-grid p {
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+/* Loading & Error States */
+.loading,
+.error-message,
+.no-results {
+  background: white;
+  border-radius: 8px;
+  padding: 3rem;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.loading {
+  color: #667eea;
+  font-size: 1.25rem;
+}
+
+.error-message {
+  color: #f44336;
+}
+
+.no-results {
+  color: #666;
+}
+
+.no-results p:first-child {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.no-results ul {
+  text-align: left;
+  display: inline-block;
+  margin-top: 1rem;
+}
+
+.no-results li {
+  margin-bottom: 0.5rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .main-content {
+    flex-direction: column;
+    padding: 1rem;
+  }
+
+  .filter-panel {
+    width: 100%;
+    position: relative;
+    top: 0;
+  }
+
+  .food-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-header h1 {
+    font-size: 1.5rem;
+  }
+}
