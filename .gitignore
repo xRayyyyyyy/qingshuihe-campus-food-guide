@@ -54,3 +54,6 @@ dist/
 # 课程作业文档
 *.docx
 *.doc
+
+# Local service state
+.runtime/

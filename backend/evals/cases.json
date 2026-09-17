@@ -1,0 +1,86 @@
+{
+  "suite": "offline_food_constraints",
+  "scope": "离线数据与确定性检索评估；不调用模型或高德，不评价自然语言理解及真实餐厅数据质量。",
+  "cases": [
+    {
+      "id": "documented_multiturn_dinner",
+      "description": "方案中的两轮晚餐条件，第二轮只改预算并排除上一轮餐厅",
+      "turns": [
+        {
+          "changes": {"campus_area": "学校食堂", "meal_time": "晚餐", "taste": ["清淡"], "max_price": 15},
+          "expected": {"ids": ["local:2"], "pending_count": 0}
+        },
+        {
+          "changes": {"max_price": 20},
+          "exclude_previous": true,
+          "expected": {"ids": ["local:9"], "constraints": {"campus_area": "学校食堂", "meal_time": "晚餐", "taste": ["清淡"], "max_price": 20, "exclude_ids": ["local:2"]}}
+        }
+      ]
+    },
+    {
+      "id": "empty_result_diagnostic",
+      "description": "高评分与低预算冲突时提供经重查支持的选项，原条件保持不变",
+      "turns": [
+        {
+          "changes": {"campus_area": "学校食堂", "meal_time": "晚餐", "taste": ["清淡"], "max_price": 15, "min_rating": 4.5},
+          "check_suggestions": true,
+          "expected": {"ids": [], "suggestions": [{"id": "lower_rating", "changes": {"min_rating": 4}, "count": 1}]}
+        }
+      ]
+    },
+    {
+      "id": "unknown_budget_requires_confirmation",
+      "description": "为 local:2 注入缺失价格，严格预算下只出现在待确认区",
+      "record_overrides": {"2": {"avg_price": null}},
+      "turns": [
+        {
+          "changes": {"campus_area": "学校食堂", "meal_time": "晚餐", "taste": ["清淡"], "max_price": 15},
+          "expected": {"ids": [], "pending_ids": ["local:2"], "pending_constraints": ["avg_price"]}
+        }
+      ]
+    },
+    {
+      "id": "known_contradiction_beats_missing_fact",
+      "description": "缺失价格但已知评分不符的餐厅不能混入待确认区",
+      "record_overrides": {"2": {"avg_price": null}},
+      "turns": [
+        {
+          "changes": {"campus_area": "学校食堂", "meal_time": "晚餐", "taste": ["清淡"], "max_price": 15, "min_rating": 4.5},
+          "expected": {"ids": [], "pending_ids": []}
+        }
+      ]
+    },
+    {
+      "id": "avoid_spice_and_hotpot",
+      "description": "辣相关标签和火锅排除条件同时有效，不把口味标签缺失当作不辣",
+      "record_overrides": {"2": {"taste": []}},
+      "turns": [
+        {
+          "changes": {"exclude_taste": ["辣"], "exclude_cuisines": ["火锅"], "limit": 20},
+          "expected": {"minimum_results": 1, "forbidden_taste_fragment": "辣", "forbidden_cuisine_fragment": "火锅", "pending_ids": ["local:2"], "pending_constraints": ["taste"]}
+        }
+      ]
+    },
+    {
+      "id": "allergen_unknown_is_never_safe",
+      "description": "已知含奶记录排除，其余不完整记录仅待确认；建议不会移除禁忌",
+      "turns": [
+        {
+          "changes": {"exclude_allergens": ["奶制品"], "limit": 20},
+          "check_suggestions": true,
+          "expected": {"ids": [], "pending_count": 15, "pending_constraints": ["allergens"], "forbidden_allergen": "奶制品", "suggestions": []}
+        }
+      ]
+    },
+    {
+      "id": "reference_and_opening_provenance",
+      "description": "本地读取时间不伪装源数据更新，距离及营业状态保留证据边界",
+      "turns": [
+        {
+          "changes": {"limit": 20, "max_distance": 500, "sort_by": "reference_distance"},
+          "expected": {"minimum_results": 1, "all_fields": {"is_open": null, "opening_status": "unknown", "is_mock": true, "data_updated_at": null, "distance_basis": "local_reference"}}
+        }
+      ]
+    }
+  ]
+}

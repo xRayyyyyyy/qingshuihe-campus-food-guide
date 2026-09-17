@@ -1,101 +1,77 @@
-"""FastAPI主应用"""
-from fastapi import FastAPI, Query
+"""Campus food API: deterministic recommendations and a bounded dialogue agent."""
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, List
+from pydantic import ValidationError
+
+from app.agents.food_agent import FoodAgent
+from app.routes.admin import router as admin_router
+from app.routes.chat import router as chat_router
+from app.schemas.food import FoodFilters
 from app.services.food_service import FoodService
 
-app = FastAPI(title="校园美食推荐助手")
-
-# 配置CORS
+app = FastAPI(title="校园觅食 Agent", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
-
-# 初始化服务
 food_service = FoodService()
-
-# 导入管理路由
-from app.routes.admin import router as admin_router
+app.state.food_service = food_service
+app.state.food_agent = FoodAgent(food_service)
 app.include_router(admin_router)
+app.include_router(chat_router)
 
 
 @app.get("/api/health")
 async def health_check():
-    """健康检查"""
     return {"status": "ok", "message": "校园美食推荐助手运行正常"}
 
 
 @app.get("/api/foods")
-async def get_foods(
-    campus_area: Optional[str] = Query(None, description="校区区域")
-):
-    """
-    获取餐饮列表
-
-    Args:
-        campus_area: 学校食堂|南门|西门龙湖时代天街
-    """
-    foods = await food_service.get_foods(campus_area)
-    return {
-        "foods": foods,
-        "count": len(foods)
-    }
+async def get_foods(campus_area: str | None = None):
+    try:
+        filters = FoodFilters(campus_area=campus_area)
+    except ValidationError:
+        raise HTTPException(422, "校区区域无效") from None
+    foods = await food_service.get_foods(filters.campus_area)
+    return {"foods": foods, "count": len(foods)}
 
 
 @app.get("/api/recommend")
 async def recommend_foods(
-    campus_area: Optional[str] = Query(None, description="校区区域"),
-    keywords: Optional[str] = Query(None, description="关键词搜索"),
-    taste: Optional[str] = Query(None, description="口味偏好，逗号分隔"),
-    max_price: Optional[int] = Query(None, description="最高预算"),
-    max_distance: Optional[int] = Query(None, description="最远距离(米)"),
-    min_rating: Optional[float] = Query(None, description="最低评分"),
-    meal_time: Optional[str] = Query(None, description="用餐时段"),
-    exclude_allergens: Optional[str] = Query(None, description="排除过敏原，逗号分隔"),
-    limit: int = Query(10, description="返回数量上限")
+    campus_area: str | None = None,
+    keywords: str | None = Query(None, max_length=100),
+    taste: str | None = Query(None, max_length=300),
+    max_price: float | None = Query(None, ge=0, le=10000),
+    max_distance: int | None = Query(None, ge=0, le=100000),
+    min_rating: float | None = Query(None, ge=0, le=5),
+    meal_time: str | None = None,
+    exclude_allergens: str | None = Query(None, max_length=300),
+    exclude_taste: str | None = Query(None, max_length=300),
+    exclude_cuisines: str | None = Query(None, max_length=300),
+    exclude_ids: str | None = Query(None, max_length=3000),
+    sort_by: Literal["rating", "price", "reference_distance"] = "rating",
+    limit: int = Query(10, ge=1, le=20),
 ):
-    """
-    推荐餐饮
-
-    Args:
-        campus_area: 学校食堂|南门|西门龙湖时代天街
-        keywords: 搜索关键词
-        taste: 口味偏好列表
-        max_price: 最高预算
-        max_distance: 最远距离
-        min_rating: 最低评分
-        meal_time: 早餐|午餐|晚餐|夜宵
-        exclude_allergens: 排除的过敏原列表
-        limit: 返回数量
-    """
-    # 解析列表参数
-    taste_list = taste.split(",") if taste else None
-    allergens_list = exclude_allergens.split(",") if exclude_allergens else None
-
-    result = await food_service.recommend_foods(
-        campus_area=campus_area,
-        keywords=keywords,
-        taste=taste_list,
-        max_price=max_price,
-        max_distance=max_distance,
-        min_rating=min_rating,
-        meal_time=meal_time,
-        exclude_allergens=allergens_list,
-        limit=limit
-    )
-
-    return result
+    def split(value):
+        return [item.strip() for item in value.split(",") if item.strip()] if value else []
+    try:
+        filters = FoodFilters(
+            campus_area=campus_area, keywords=keywords, taste=split(taste), max_price=max_price,
+            max_distance=max_distance, min_rating=min_rating, meal_time=meal_time,
+            exclude_allergens=split(exclude_allergens), exclude_taste=split(exclude_taste),
+            exclude_cuisines=split(exclude_cuisines), exclude_ids=split(exclude_ids),
+            sort_by=sort_by, limit=limit,
+        )
+    except ValidationError:
+        raise HTTPException(422, "筛选条件无效") from None
+    return await food_service.search(filters)
 
 
 @app.get("/")
 async def root():
-    """根路径"""
-    return {
-        "message": "欢迎使用校园美食推荐助手API",
-        "docs": "/docs",
-        "health": "/api/health"
-    }
+    return {"message": "校园觅食 Agent API", "docs": "/docs", "health": "/api/health"}

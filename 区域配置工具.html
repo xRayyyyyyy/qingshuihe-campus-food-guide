@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>区域配置工具 - 校园美食推荐助手</title>
-  <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=YOUR_AMAP_JS_KEY"></script>
   <style>
     * {
       margin: 0;
@@ -165,17 +164,17 @@
   <div class="container">
     <!-- 侧边栏 -->
     <div class="sidebar">
-      <h1>🗺️ 区域配置工具</h1>
+      <h1>🗺️ 区域配置工具</h1><p id="notice" role="status">正在读取后端配置…</p>
 
       <div class="section">
         <h2>操作步骤</h2>
         <div class="tip">
           <strong>如何使用：</strong><br>
-          1. 输入区域名称<br>
+          1. 选择区域名称<br>
           2. 点击"开始绘制"按钮<br>
-          3. 在地图上点击绘制矩形或圆形<br>
-          4. 调整大小后点击"保存区域"<br>
-          5. 复制配置代码到项目中
+          3. 在地图上按住鼠标拖动绘制<br>
+          4. 点击"保存区域"，不满意可重新绘制<br>
+          5. 点击“保存到后端”立即应用；也可下载 JSON
         </div>
       </div>
 
@@ -183,11 +182,11 @@
         <h2>新建区域</h2>
         <div class="input-group">
           <label>区域名称</label>
-          <input type="text" id="areaName" placeholder="例如：学校食堂" />
+          <select id="areaName"><option>学校食堂</option><option>南门</option><option>西门龙湖时代天街</option></select><p>重新绘制同名区域会替换旧边界。</p>
         </div>
         <button class="btn btn-primary" onclick="startDrawing('circle')">🔵 开始绘制（圆形）</button>
         <button class="btn btn-primary" onclick="startDrawing('rectangle')">⬜ 开始绘制（矩形）</button>
-        <button class="btn btn-secondary" onclick="cancelDrawing()">取消绘制</button>
+        <button class="btn btn-primary" onclick="startDrawing('polygon')">沿边界绘制（多边形）</button><p>多边形逐点点击，双击结束；重叠处归属距离区域中心更近的区域。</p><button class="btn btn-secondary" onclick="cancelDrawing()">取消绘制</button>
       </div>
 
       <div class="section" id="currentDrawing" style="display:none;">
@@ -204,8 +203,8 @@
       <div class="section">
         <h2>导出配置</h2>
         <button class="btn btn-primary" onclick="saveToBackend()">💾 保存到后端（推荐）</button>
-        <button class="btn btn-secondary" onclick="exportConfig()">📋 生成配置代码</button>
-        <div id="configOutput"></div>
+        <button class="btn btn-secondary" onclick="exportConfig()">📋 预览 JSON</button>
+        <button class="btn btn-secondary" onclick="downloadConfig()">下载 JSON</button><pre id="configOutput" style="white-space:pre-wrap"></pre>
       </div>
     </div>
 
@@ -216,281 +215,130 @@
   </div>
 
   <script>
-    let map;
+    let map, mouseTool, currentOverlay, drawingType, dirty = false, busy = false;
     let areas = [];
-    let currentOverlay = null;
-    let currentDrawingTool = null;
-    let mouseTool = null;
-
-    // 初始化地图
-    function initMap() {
-      map = new AMap.Map('map', {
-        zoom: 15,
-        center: [103.9348, 30.7606], // 清水河校区
-        mapStyle: 'amap://styles/normal'
-      });
-
-      // 加载绘制工具插件
-      AMap.plugin(['AMap.MouseTool', 'AMap.Scale', 'AMap.ToolBar'], function() {
+    const style = {fillColor:'#667eea', fillOpacity:0.25, strokeColor:'#667eea', strokeWeight:2};
+    const notice = text => document.getElementById('notice').textContent = text;
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+      return data;
+    }
+    function makeOverlay(config) {
+      const shape = config.type === 'polygon' ? new AMap.Polygon({...style, path:config.path}) : config.type === 'rectangle'
+        ? new AMap.Rectangle({...style, bounds:new AMap.Bounds(config.bounds[0], config.bounds[1])})
+        : new AMap.Circle({...style, center:config.location.split(',').map(Number), radius:config.radius});
+      map.add(shape); return shape;
+    }
+    async function init() {
+      if (location.protocol === 'file:') { location.replace('http://127.0.0.1:8000/area-config'); return; }
+      try {
+        const saved = await api('/api/admin/areas');
+        areas = Object.entries(saved.areas).map(([name, config]) => ({name, config}));
+        renderAreas();
+        const config = await api('/api/admin/map-config');
+        if (!config.key) throw new Error('请先配置前端地图 Key');
+        if (config.securityJsCode) window._AMapSecurityConfig = {securityJsCode:config.securityJsCode};
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          const timer = setTimeout(() => reject(new Error('地图加载超时，请检查网络及地图 Key / securityJsCode')), 15000);
+          script.src = 'https://webapi.amap.com/maps?v=2.0&key=' + encodeURIComponent(config.key);
+          script.onload = () => {clearTimeout(timer); resolve();};
+          script.onerror = () => {clearTimeout(timer); reject(new Error('地图脚本加载失败'));};
+          document.head.append(script);
+        });
+        map = new AMap.Map('map', {zoom:15, center:[103.9348,30.7606]});
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('绘图插件加载超时')), 15000);
+          AMap.plugin(['AMap.MouseTool','AMap.Scale','AMap.ToolBar'], () => {clearTimeout(timer); resolve();});
+        });
         mouseTool = new AMap.MouseTool(map);
-        map.addControl(new AMap.Scale());
-        map.addControl(new AMap.ToolBar());
-        console.log('✓ 地图工具加载完成');
-      });
-
-      // 显示已有区域（如果有的话）
-      renderAreas();
+        map.addControl(new AMap.Scale()); map.addControl(new AMap.ToolBar());
+        mouseTool.on('draw', e => {
+          currentOverlay = e.obj; mouseTool.close(false);
+          document.getElementById('currentDrawing').style.display = 'block';
+          document.getElementById('drawingStatus').textContent = '绘制完成，点击保存区域加入待提交配置。';
+        });
+        areas.forEach(area => area.overlay = makeOverlay(area.config));
+        notice(config.securityJsCode ? '已连接后端，配置已加载。' : '已读取配置。尚未配置 securityJsCode；若地图空白，请补充对应安全密钥。');
+      } catch (error) { notice(error.message); }
     }
-
-    // 开始绘制
     function startDrawing(type) {
-      const areaName = document.getElementById('areaName').value.trim();
-      if (!areaName) {
-        alert('请先输入区域名称');
-        return;
-      }
-
-      // 清除之前的绘制
-      if (currentOverlay) {
-        map.remove(currentOverlay);
-        currentOverlay = null;
-      }
-
-      if (type === 'circle') {
-        mouseTool.circle({
-          fillColor: '#667eea',
-          fillOpacity: 0.3,
-          strokeColor: '#667eea',
-          strokeWeight: 2
-        });
-
-        mouseTool.on('draw', function(e) {
-          currentOverlay = e.obj;
-          const center = currentOverlay.getCenter();
-          const radius = currentOverlay.getRadius();
-
-          document.getElementById('currentDrawing').style.display = 'block';
-          document.getElementById('drawingStatus').innerHTML = `
-            <strong>${areaName}</strong><br>
-            中心点: ${center.getLng().toFixed(6)}, ${center.getLat().toFixed(6)}<br>
-            半径: ${Math.round(radius)}米
-          `;
-        });
-      } else if (type === 'rectangle') {
-        mouseTool.rectangle({
-          fillColor: '#667eea',
-          fillOpacity: 0.3,
-          strokeColor: '#667eea',
-          strokeWeight: 2
-        });
-
-        mouseTool.on('draw', function(e) {
-          currentOverlay = e.obj;
-          const bounds = currentOverlay.getBounds();
-          const center = bounds.getCenter();
-
-          document.getElementById('currentDrawing').style.display = 'block';
-          document.getElementById('drawingStatus').innerHTML = `
-            <strong>${areaName}</strong><br>
-            中心点: ${center.getLng().toFixed(6)}, ${center.getLat().toFixed(6)}<br>
-            类型: 矩形区域
-          `;
-        });
-      }
+      if (!mouseTool) {notice('地图绘图工具尚未就绪，请检查地图配置。'); return;}
+      if (busy) return;
+      cancelDrawing(); drawingType = type;
+      mouseTool[type](style); notice(type === 'polygon' ? '沿校园边界逐点点击，双击结束。' : '在地图上按住鼠标拖动绘制区域。');
     }
-
-    // 取消绘制
     function cancelDrawing() {
-      if (mouseTool) {
-        mouseTool.close(true);
-      }
-      if (currentOverlay) {
-        map.remove(currentOverlay);
-        currentOverlay = null;
-      }
-      document.getElementById('currentDrawing').style.display = 'none';
-    }
-
-    // 保存当前区域
-    function saveCurrentArea() {
-      const areaName = document.getElementById('areaName').value.trim();
-      if (!currentOverlay) {
-        alert('请先绘制区域');
-        return;
-      }
-
-      let areaData = {
-        name: areaName,
-        overlay: currentOverlay
-      };
-
-      if (currentOverlay.CLASS_NAME === 'AMap.Circle') {
-        const center = currentOverlay.getCenter();
-        areaData.type = 'circle';
-        areaData.center = [center.getLng(), center.getLat()];
-        areaData.radius = Math.round(currentOverlay.getRadius());
-      } else if (currentOverlay.CLASS_NAME === 'AMap.Rectangle') {
-        const bounds = currentOverlay.getBounds();
-        const center = bounds.getCenter();
-        areaData.type = 'rectangle';
-        areaData.center = [center.getLng(), center.getLat()];
-        areaData.bounds = bounds;
-      }
-
-      areas.push(areaData);
-
-      // 添加标签
-      const marker = new AMap.Marker({
-        position: areaData.center,
-        content: `<div style="background: white; padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${areaName}</div>`,
-        offset: new AMap.Pixel(-30, -30)
-      });
-      map.add(marker);
-      areaData.marker = marker;
-
+      if (mouseTool) mouseTool.close(false);
+      if (currentOverlay) map.remove(currentOverlay);
       currentOverlay = null;
       document.getElementById('currentDrawing').style.display = 'none';
-      document.getElementById('areaName').value = '';
-      mouseTool.close(true);
-
-      renderAreas();
-      alert('✓ 区域已保存');
     }
-
-    // 渲染区域列表
+    function saveCurrentArea() {
+      if (!currentOverlay || busy) return;
+      const name = document.getElementById('areaName').value;
+      let center, radius, bounds, path;
+      if (drawingType === 'polygon') {
+        const points = currentOverlay.getPath(); path = points.map(p => [p.getLng(),p.getLat()]);
+        center = currentOverlay.getBounds().getCenter(); radius = Math.ceil(Math.max(...points.map(p => center.distance(p))));
+      } else if (drawingType === 'rectangle') {
+        const b = currentOverlay.getBounds(); center = b.getCenter();
+        const sw = b.getSouthWest(), ne = b.getNorthEast();
+        bounds = [[sw.getLng(),sw.getLat()],[ne.getLng(),ne.getLat()]];
+        radius = Math.ceil(Math.max(center.distance(sw),center.distance(ne)));
+      } else { center = currentOverlay.getCenter(); radius = Math.ceil(currentOverlay.getRadius()); }
+      if (!Number.isFinite(radius) || radius < 1 || radius > 5000) {notice('覆盖半径必须在 1–5000 米，请重新绘制。'); return;}
+      const config = {type:drawingType, location:center.getLng().toFixed(6)+','+center.getLat().toFixed(6), radius};
+      if (bounds) config.bounds = bounds;
+      if (path) config.path = path;
+      const previous = areas.find(a => a.name === name);
+      if (previous?.overlay) map.remove(previous.overlay);
+      areas = areas.filter(a => a.name !== name);
+      areas.push({name, config, overlay:currentOverlay}); currentOverlay = null;
+      mouseTool.close(false); dirty = true; renderAreas();
+      document.getElementById('currentDrawing').style.display = 'none';
+      notice('区域已加入草稿，请点击保存到后端。');
+    }
     function renderAreas() {
-      const list = document.getElementById('areasList');
-      if (areas.length === 0) {
-        list.innerHTML = '<p style="color: #999; font-size: 13px;">暂无区域</p>';
-        return;
-      }
-
-      list.innerHTML = areas.map((area, index) => `
-        <div class="area-item">
-          <div class="area-name">${area.name}</div>
-          <div class="area-info">类型: ${area.type === 'circle' ? '圆形' : '矩形'}</div>
-          <div class="area-info">中心: ${area.center[0].toFixed(4)}, ${area.center[1].toFixed(4)}</div>
-          ${area.radius ? `<div class="area-info">半径: ${area.radius}米</div>` : ''}
-          <div class="area-actions">
-            <button class="btn btn-secondary" onclick="locateArea(${index})">定位</button>
-            <button class="btn btn-danger" onclick="deleteArea(${index})">删除</button>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    // 定位到区域
-    function locateArea(index) {
-      const area = areas[index];
-      map.setCenter(area.center);
-      map.setZoom(16);
-    }
-
-    // 删除区域
-    function deleteArea(index) {
-      if (!confirm('确定删除此区域？')) return;
-
-      const area = areas[index];
-      map.remove(area.overlay);
-      if (area.marker) map.remove(area.marker);
-
-      areas.splice(index, 1);
-      renderAreas();
-    }
-
-    // 保存到后端
-    async function saveToBackend() {
-      if (areas.length === 0) {
-        alert('请先绘制并保存区域');
-        return;
-      }
-
-      const config = {};
-      areas.forEach(area => {
-        config[area.name] = {
-          location: `${area.center[0].toFixed(4)},${area.center[1].toFixed(4)}`,
-          radius: area.radius || 500
-        };
-      });
-
-      try {
-        const response = await fetch('http://127.0.0.1:8000/api/admin/areas', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ areas: config })
-        });
-
-        const result = await response.json();
-
-        if (response.ok && result.success) {
-          document.getElementById('configOutput').innerHTML = `
-            <div class="status success">
-              ✓ 配置已成功保存到后端！<br>
-              ${Object.keys(config).length} 个区域已更新<br>
-              <small>后端服务会自动应用新配置</small>
-            </div>
-          `;
-          alert('✓ 配置已保存到后端，无需重启服务！');
-        } else {
-          throw new Error(result.detail || '保存失败');
+      const list = document.getElementById('areasList'); list.replaceChildren();
+      areas.forEach((area, index) => {
+        const card = document.createElement('div'); card.className = 'area-item';
+        const title = document.createElement('div'); title.textContent = area.name; card.append(title);
+        const info = document.createElement('p'); info.textContent = `${area.config.type === 'polygon' ? '多边形' : area.config.type === 'rectangle' ? '矩形' : '圆形'} · ${area.config.location} · 覆盖半径 ${area.config.radius} 米`; card.append(info);
+        for (const [label, handler] of [['定位', () => locateArea(index)], ['删除', () => deleteArea(index)]]) {
+          const button = document.createElement('button'); button.className = 'btn btn-secondary'; button.textContent = label; button.onclick = handler; card.append(button);
         }
-      } catch (error) {
-        document.getElementById('configOutput').innerHTML = `
-          <div class="status" style="background: #f8d7da; color: #721c24;">
-            ❌ 保存失败: ${error.message}<br>
-            <small>请确保后端服务正在运行 (http://127.0.0.1:8000)</small>
-          </div>
-        `;
-        alert('保存失败: ' + error.message);
-      }
-    }
-
-    // 导出配置
-    function exportConfig() {
-      if (areas.length === 0) {
-        alert('请先绘制并保存区域');
-        return;
-      }
-
-      const config = {};
-      areas.forEach(area => {
-        config[area.name] = {
-          location: `${area.center[0].toFixed(4)},${area.center[1].toFixed(4)}`,
-          radius: area.radius || 500
-        };
-      });
-
-      const code = `# 复制以下代码到 backend/app/services/amap_service.py
-
-CAMPUS_AREAS = ${JSON.stringify(config, null, 2)}`;
-
-      document.getElementById('configOutput').innerHTML = `
-        <div class="status success">✓ 配置代码已生成</div>
-        <code>${code.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
-        <button class="btn btn-secondary" style="margin-top: 10px;" onclick="copyConfig()">📋 复制代码</button>
-      `;
-    }
-
-    // 复制配置
-    function copyConfig() {
-      const config = {};
-      areas.forEach(area => {
-        config[area.name] = {
-          location: `${area.center[0].toFixed(4)},${area.center[1].toFixed(4)}`,
-          radius: area.radius || 500
-        };
-      });
-
-      const code = `CAMPUS_AREAS = ${JSON.stringify(config, null, 2)}`;
-      navigator.clipboard.writeText(code).then(() => {
-        alert('✓ 已复制到剪贴板');
+        list.append(card);
       });
     }
-
-    // 页面加载完成后初始化
-    window.onload = initMap;
+    function locateArea(index) { if (map) map.setCenter(areas[index].config.location.split(',').map(Number)); }
+    function deleteArea(index) {
+      if (busy) return;
+      if (areas.length <= 1) {notice('至少保留一个区域。'); return;}
+      if (areas[index].overlay) map.remove(areas[index].overlay);
+      areas.splice(index,1); dirty = true; renderAreas(); notice('已从草稿删除，保存到后端后生效。');
+    }
+    function configuration() { return Object.fromEntries(areas.map(a => [a.name,a.config])); }
+    async function saveToBackend() {
+      if (busy) return;
+      if (currentOverlay) {notice('请先保存或取消当前绘制。'); return;}
+      if (!areas.length) {notice('至少保留一个区域。'); return;}
+      busy = true;
+      try {
+        const result = await api('/api/admin/areas', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({areas:configuration()})});
+        areas.forEach(a => a.config = result.areas[a.name]);
+        dirty = false; renderAreas(); notice('已保存到后端 JSON，下一次餐厅查询立即使用新边界。');
+      } catch (error) {notice('保存失败：'+error.message);} finally {busy = false;}
+    }
+    function exportConfig() { document.getElementById('configOutput').textContent = JSON.stringify(configuration(),null,2); }
+    function downloadConfig() {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(configuration(),null,2)],{type:'application/json'}));
+      const link = document.createElement('a'); link.href = url; link.download = 'area_config.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
+    }
+    window.addEventListener('beforeunload', e => {if (dirty || currentOverlay) {e.preventDefault(); e.returnValue = '';}});
+    init();
   </script>
 </body>
 </html>

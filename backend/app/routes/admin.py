@@ -1,114 +1,113 @@
-"""区域配置管理路由"""
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Dict
+"""Local area editor and validated, persistent query boundaries."""
 import json
+import math
 from pathlib import Path
+from typing import Literal
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from dotenv import dotenv_values
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 router = APIRouter()
-
-# 配置文件路径
+ROOT = Path(__file__).resolve().parents[3]
 CONFIG_FILE = Path(__file__).parent.parent / "services" / "area_config.json"
-
+NAMES = {"学校食堂", "南门", "西门龙湖时代天街"}
 
 class AreaConfig(BaseModel):
-    """区域配置模型"""
-    location: str  # "经度,纬度"
-    radius: int
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    location: str
+    radius: int = Field(ge=1, le=5000)
+    type: Literal["circle", "rectangle", "polygon"] = "circle"
+    bounds: tuple[tuple[float, float], tuple[float, float]] | None = None
 
+    path: list[tuple[float, float]] | None = Field(default=None, min_length=3, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_geometry(self):
+        lon, lat = map(float, self.location.split(","))
+        if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
+            raise ValueError("经纬度无效")
+        if self.type == "polygon":
+            if not self.path or self.bounds is not None:
+                raise ValueError("多边形需要至少三个顶点，不能包含矩形边界")
+            if any(not (-180 <= x <= 180 and -90 <= y <= 90) for x,y in self.path):
+                raise ValueError("多边形坐标无效")
+            if len(set(self.path)) < 3:
+                raise ValueError("多边形需要三个不同顶点")
+            signed = sum(x1*y2-x2*y1 for (x1,y1),(x2,y2) in zip(self.path,self.path[1:]+self.path[:1]))
+            if abs(signed) < 1e-10:
+                raise ValueError("多边形面积必须大于零")
+            lon = (min(x for x,y in self.path)+max(x for x,y in self.path))/2
+            lat = (min(y for x,y in self.path)+max(y for x,y in self.path))/2
+            from app.services.amap_service import boundary_distance
+            self.radius = math.ceil(max(boundary_distance(lon,lat,x,y) for x,y in self.path))
+            if not 1 <= self.radius <= 5000:
+                raise ValueError("多边形覆盖半径必须在 1–5000 米")
+        elif self.path is not None:
+            raise ValueError("非多边形不能包含顶点")
+        if self.type == "rectangle":
+            if self.bounds is None:
+                raise ValueError("矩形必须包含西南和东北坐标")
+            (west, south), (east, north) = self.bounds
+            if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+                raise ValueError("矩形边界无效")
+            lon, lat = (west + east) / 2, (south + north) / 2
+            from app.services.amap_service import boundary_distance
+            self.radius = math.ceil(max(boundary_distance(lon, lat, x, y) for x in (west, east) for y in (south, north)))
+            if not 1 <= self.radius <= 5000:
+                raise ValueError("区域过大或过小，覆盖半径必须在 1–5000 米")
+        elif self.bounds is not None:
+            raise ValueError("圆形不能包含矩形边界")
+        self.location = f"{lon:.6f},{lat:.6f}"
+        return self
 
 class AreasUpdate(BaseModel):
-    """区域配置更新请求"""
-    areas: Dict[str, AreaConfig]
+    areas: dict[str, AreaConfig]
 
+    @model_validator(mode="after")
+    def names(self):
+        if not self.areas or not set(self.areas) <= NAMES:
+            raise ValueError("至少保留一个区域，名称须为学校食堂、南门或西门龙湖时代天街")
+        return self
+
+@router.get("/area-config", include_in_schema=False)
+async def editor():
+    return FileResponse(ROOT / "区域配置工具.html", media_type="text/html", headers={"Cache-Control": "no-store"})
+
+@router.get("/api/admin/map-config")
+async def map_config():
+    values = dotenv_values(ROOT / "frontend" / ".env.local")
+    return {"key": values.get("VITE_AMAP_JS_KEY", ""), "securityJsCode": values.get("VITE_AMAP_SECURITY_CODE", "")}
 
 @router.get("/api/admin/areas")
 async def get_areas():
-    """获取当前区域配置"""
+    from app.services import amap_service
+    return {"success": True, "areas": amap_service.CAMPUS_AREAS}
+
+def persist(areas):
+    from app.services import amap_service
+    temp = CONFIG_FILE.with_suffix(".json.tmp")
     try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                areas = json.load(f)
-        else:
-            # 返回默认配置
-            from app.services.amap_service import CAMPUS_AREAS
-            areas = CAMPUS_AREAS
-
-        return {"success": True, "areas": areas}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"读取配置失败: {str(e)}")
-
+        temp.write_text(json.dumps(areas, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(CONFIG_FILE)
+    except OSError:
+        raise HTTPException(500, "区域配置写入失败") from None
+    amap_service.CAMPUS_AREAS = areas
 
 @router.post("/api/admin/areas")
 async def update_areas(data: AreasUpdate):
-    """更新区域配置"""
-    try:
-        # 验证数据格式
-        areas_dict = {}
-        for name, config in data.areas.items():
-            # 验证location格式
-            try:
-                lon, lat = config.location.split(',')
-                float(lon)
-                float(lat)
-            except:
-                raise HTTPException(status_code=400, detail=f"区域 {name} 的坐标格式错误")
-
-            # 验证半径
-            if config.radius <= 0 or config.radius > 5000:
-                raise HTTPException(status_code=400, detail=f"区域 {name} 的半径必须在1-5000米之间")
-
-            areas_dict[name] = {
-                "location": config.location,
-                "radius": config.radius
-            }
-
-        # 保存到JSON文件
-        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(areas_dict, f, ensure_ascii=False, indent=2)
-
-        # 动态更新内存中的配置
-        from app.services import amap_service
-        amap_service.CAMPUS_AREAS = areas_dict
-
-        return {
-            "success": True,
-            "message": "区域配置已更新",
-            "areas": areas_dict
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
-
+    areas = {name: area.model_dump(exclude_none=True) for name, area in data.areas.items()}
+    persist(areas)
+    return {"success": True, "areas": areas}
 
 @router.delete("/api/admin/areas/{area_name}")
 async def delete_area(area_name: str):
-    """删除指定区域"""
-    try:
-        if not CONFIG_FILE.exists():
-            raise HTTPException(status_code=404, detail="配置文件不存在")
-
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            areas = json.load(f)
-
-        if area_name not in areas:
-            raise HTTPException(status_code=404, detail=f"区域 {area_name} 不存在")
-
-        del areas[area_name]
-
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(areas, f, ensure_ascii=False, indent=2)
-
-        # 更新内存配置
-        from app.services import amap_service
-        amap_service.CAMPUS_AREAS = areas
-
-        return {"success": True, "message": f"区域 {area_name} 已删除"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
+    from app.services import amap_service
+    areas = dict(amap_service.CAMPUS_AREAS)
+    if area_name not in areas:
+        raise HTTPException(404, "区域不存在")
+    if len(areas) <= 1:
+        raise HTTPException(400, "至少保留一个区域")
+    del areas[area_name]
+    persist(areas)
+    return {"success": True, "areas": areas}
